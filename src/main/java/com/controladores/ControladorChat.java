@@ -1,9 +1,11 @@
 package com.controladores;
 
 import com.modelos.Chat;
+import com.modelos.Servicio;
 import com.modelos.Solicitud;
 import com.modelos.Usuario;
 import com.servicios.ServicioChat;
+import com.servicios.ServicioNotificaciones;
 import com.servicios.ServicioSolicitud;
 
 import jakarta.servlet.http.HttpSession;
@@ -26,6 +28,9 @@ public class ControladorChat {
 
     @Autowired
     private ServicioSolicitud servicioSolicitud; // Inyección del servicio para gestionar solicitudes
+
+    @Autowired
+    private ServicioNotificaciones servicioNotificaciones;
 
     // Maneja la continuación de una conversación existente
     @PostMapping("/continuar")
@@ -58,31 +63,21 @@ public class ControladorChat {
     @PostMapping("/crear")
     public String crearChat(@RequestParam Long solicitanteId, @RequestParam Long solicitudId, HttpSession session) {
         try {
-            // Crear un nuevo objeto Chat y establecer atributos clave
             Chat chat = new Chat();
             chat.setSolicitanteId(solicitanteId);
             chat.setSolicitudId(solicitudId);
-            chat.setFechaCreacion(new Date().getTime()); // Guardar timestamp actual como fecha de creación
+            chat.setFechaCreacion(new Date().getTime());
 
-            // Persistir el nuevo chat en Firebase o base de datos
             Chat createdChat = servicioChat.createChat(chat);
-
-            // Actualizar el estado de la solicitud relacionada a "Leído"
-            Solicitud solicitud = servicioSolicitud.getSolicitudById(solicitudId);
-            if (solicitud != null) {
-                solicitud.setEstado("Leído");
-                servicioSolicitud.guardarSolicitud(solicitud); // Guardar cambios en la solicitud
-            }
-
-            // Marcar en sesión que el chat fue creado para esa solicitud (bandera para
-            // lógica futura)
             session.setAttribute("isChatCreated_" + solicitudId, true);
 
-            // Redirigir al usuario a la vista del nuevo chat
+            // ✅ Enviar notificación al solicitante
+            Solicitud solicitud = servicioSolicitud.getSolicitudById(solicitudId);
+            servicioNotificaciones.notificarConversacionIniciada(solicitud, createdChat.getId());
+
+            // 🔁 Redirigir a la vista del chat
             return "redirect:/chat/ver/" + createdChat.getId();
         } catch (Exception e) {
-            // En caso de error, redirigir a la vista de error con el mensaje
-            // correspondiente
             return "redirect:/error?mensaje=" + e.getMessage();
         }
     }
@@ -115,6 +110,11 @@ public class ControladorChat {
             // Validar si el usuario actual es el solicitante o el proveedor del servicio
             boolean esSolicitante = solicitud.getSolicitante().getId().equals(usuarioEnSesion.getId());
             boolean esProveedor = solicitud.getServicio().getUsuario().getId().equals(usuarioEnSesion.getId());
+            Usuario otroUsuario = esSolicitante
+                    ? solicitud.getServicio().getUsuario()
+                    : solicitud.getSolicitante();
+            String rolDescripcion = esSolicitante ? solicitud.getServicio().getNombre() : "Solicitante";
+            model.addAttribute("rolDescripcion", rolDescripcion);
 
             if (!esSolicitante && !esProveedor) {
                 return "redirect:/";
@@ -130,6 +130,9 @@ public class ControladorChat {
             model.addAttribute("mensajes", chat.getMensajes() != null ? chat.getMensajes() : new ArrayList<>());
             model.addAttribute("chatId", chatId);
             model.addAttribute("solicitanteId", chat.getSolicitanteId());
+            model.addAttribute("otroUsuario", otroUsuario);
+            Servicio servicio = solicitud.getServicio();
+            model.addAttribute("servicio", servicio);
 
             return "chat.jsp";
         } catch (Exception e) {
